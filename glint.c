@@ -28,8 +28,14 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
-#include <dirent.h>
-#include <sys/stat.h>
+
+#ifdef _WIN32
+ #include <windows.h>
+ #include <direct.h>
+#else
+ #include <dirent.h>
+ #include <sys/stat.h>
+#endif
 
 #include <SDL2/SDL.h>
 #include "wasm3/wasm3.h"
@@ -237,9 +243,18 @@ m3ApiRawFunction(host_file_size) {
     char resolved[1024];
     if (fs_resolve(path, resolved, sizeof(resolved)) < 0) { m3ApiReturn(-1); }
 
+#ifdef _WIN32
+    FILE *f = fopen(resolved, "rb");
+    if (!f) { m3ApiReturn(-1); }
+    fseek(f, 0, SEEK_END);
+    int32_t sz = (int32_t)ftell(f);
+    fclose(f);
+    m3ApiReturn(sz);
+#else
     struct stat st;
     if (stat(resolved, &st) < 0) { m3ApiReturn(-1); }
     m3ApiReturn((int32_t)st.st_size);
+#endif
 }
 
 m3ApiRawFunction(host_file_list) {
@@ -253,6 +268,26 @@ m3ApiRawFunction(host_file_list) {
     char resolved[1024];
     if (fs_resolve(dir, resolved, sizeof(resolved)) < 0) { m3ApiReturn(-1); }
 
+#ifdef _WIN32
+    char pattern[1024];
+    snprintf(pattern, sizeof(pattern), "%s\\*", resolved);
+    WIN32_FIND_DATAA fd;
+    HANDLE hFind = FindFirstFileA(pattern, &fd);
+    if (hFind == INVALID_HANDLE_VALUE) { m3ApiReturn(-1); }
+
+    int count = 0, pos = 0;
+    do {
+        if (fd.cFileName[0] == '.') continue;
+        int nlen = (int)strlen(fd.cFileName);
+        if (pos + nlen + 1 > max_len) break;
+        memcpy(dest + pos, fd.cFileName, nlen);
+        pos += nlen;
+        dest[pos++] = '\0';
+        count++;
+    } while (FindNextFileA(hFind, &fd));
+    FindClose(hFind);
+    m3ApiReturn(count);
+#else
     DIR *d = opendir(resolved);
     if (!d) { m3ApiReturn(-1); }
 
@@ -269,6 +304,7 @@ m3ApiRawFunction(host_file_list) {
     }
     closedir(d);
     m3ApiReturn(count);
+#endif
 }
 
 // --- SDL scancode to Glint key index ---
